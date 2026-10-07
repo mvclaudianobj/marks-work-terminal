@@ -81,6 +81,10 @@ def parser() -> argparse.ArgumentParser:
     monitor_status.add_argument("slug")
     monitor_stop = monitor_sub.add_parser("stop")
     monitor_stop.add_argument("slug")
+    signal_command = sub.add_parser("signal", help="envia estado agêntico explícito metadata-only")
+    signal_command.add_argument("slug")
+    signal_command.add_argument("--window", required=True)
+    signal_command.add_argument("--state", required=True, choices=("working", "waiting-user", "phase-started", "completed", "failed"))
     notify = sub.add_parser("notify", help="notificações locais")
     notify_sub = notify.add_subparsers(dest="notify_command", required=True)
     notify_sub.add_parser("test")
@@ -190,6 +194,8 @@ def init_project(paths: Paths, slug: str, root: Path, name: str | None = None, l
         "debounce = 0.75",
         "interval = 5.0",
         "history = false",
+        "agentic = false",
+        "notify_working = false",
         "",
     ]
     if layout == "recommended":
@@ -291,6 +297,10 @@ def main(argv: list[str] | None = None) -> None:
             if args.monitor_command == "stop":
                 monitor_service.stop(args.slug)
                 return
+        if args.command == "signal":
+            state = args.state.replace("-", "_")
+            print(json.dumps(Monitor(paths).signal(args.slug, args.window, state), ensure_ascii=False, indent=2))
+            return
         service = Service(paths)
         if args.command == "workspace":
             if args.workspace_command == "save":

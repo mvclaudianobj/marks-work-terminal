@@ -62,6 +62,52 @@ def ensure_regular_private_file(path: Path) -> os.stat_result:
     return details
 
 
+def validate_trusted_executable(path: Path, *, checkout_root: Path, allowed_owners: set[int]) -> Path:
+    if not path.is_absolute() or not checkout_root.is_absolute():
+        raise WorkError("executável e checkout devem ser absolutos")
+    if ".." in path.parts or ".." in checkout_root.parts:
+        raise WorkError("executável ou checkout contém escape de caminho")
+    try:
+        resolved_root = checkout_root.resolve(strict=True)
+        resolved_path = path.resolve(strict=True)
+        resolved_path.relative_to(resolved_root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise WorkError("executável não pertence ao checkout esperado") from exc
+    lexical = path
+    while True:
+        try:
+            details = lexical.lstat()
+        except OSError as exc:
+            raise WorkError(f"componente do checkout inacessível: {lexical}") from exc
+        if stat.S_ISLNK(details.st_mode):
+            raise WorkError(f"componente do checkout inseguro: {lexical}")
+        if lexical == checkout_root:
+            break
+        if lexical.parent == lexical:
+            raise WorkError("executável não pertence ao checkout esperado")
+        lexical = lexical.parent
+    chain = []
+    current = resolved_path
+    while True:
+        chain.append(current)
+        if current == resolved_root:
+            break
+        current = current.parent
+    for current in chain:
+        try:
+            details = current.lstat()
+        except OSError as exc:
+            raise WorkError(f"componente do checkout inacessível: {current}") from exc
+        if stat.S_ISLNK(details.st_mode) or details.st_uid not in allowed_owners or stat.S_IMODE(details.st_mode) & 0o022:
+            raise WorkError(f"componente do checkout inseguro: {current}")
+        if current == resolved_path:
+            if not stat.S_ISREG(details.st_mode) or not details.st_mode & stat.S_IXUSR or details.st_nlink != 1:
+                raise WorkError(f"executável work inseguro: {resolved_path}")
+        elif not stat.S_ISDIR(details.st_mode):
+            raise WorkError(f"componente do checkout inseguro: {current}")
+    return resolved_path
+
+
 @dataclass(frozen=True)
 class Paths:
     config: Path

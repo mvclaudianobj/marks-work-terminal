@@ -20,6 +20,10 @@ class CliWorkspaceRestoreTests(unittest.TestCase):
         self.assertEqual(args.project, "utm7")
         self.assertTrue(args.dry_run)
 
+    def test_signal_arguments_are_allowlisted(self):
+        args = parser().parse_args(["signal", "utm7", "--window", "dev1-markscode", "--state", "waiting-user"])
+        self.assertEqual((args.slug, args.window, args.state), ("utm7", "dev1-markscode", "waiting-user"))
+
 
 if __name__ == "__main__":
     unittest.main()

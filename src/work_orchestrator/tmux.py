@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import WorkError
-from .model import Pane, Project
+from .model import Pane, PaneObservation, Project
 from .paths import Paths, validate_slug
 from .redaction import sanitize_pane_title
 from .store import SCHEMA, read_private_text, token_path, write_bytes_atomic
@@ -48,6 +48,30 @@ CAPTURE_FORMAT = FIELD_SEPARATOR.join(
         "#{pane_height}",
     )
 )
+OBSERVE_FORMAT = FIELD_SEPARATOR.join(
+    (
+        "#{session_id}",
+        "#{@work-orchestrator-project}",
+        "#{@work-orchestrator-token}",
+        "#{window_id}",
+        "#{window_index}",
+        "#{window_name}",
+        "#{pane_id}",
+        "#{pane_index}",
+        "#{pane_activity}",
+        "#{pane_current_command}",
+        "#{pane_dead}",
+        "#{pane_dead_status}",
+    )
+)
+SHELL_BASENAMES = {"bash", "dash", "fish", "ksh", "mksh", "sh", "tcsh", "zsh"}
+ENGINE_BASENAMES = {
+    "markscode": {"marks", "markscode"},
+    "opencode": {"opencode"},
+    "codex": {"codex"},
+    "claude": {"claude"},
+}
+COMMAND_BASENAME = re.compile(r"\A[A-Za-z0-9._+-]{1,64}\Z")
 
 
 class Tmux:
@@ -428,9 +452,64 @@ class Tmux:
         self.run("set-option", "-p", "-t", pane_id, "remain-on-exit", "on")
         self.run("respawn-pane", "-k", "-t", pane_id, "-c", str(pane.cwd), "--", sys.executable, runner, payload)
 
-    def capture_owned(self, project: Project, token: str) -> tuple[str, dict[str, Any], tuple[Any, ...]]:
+    def capture_owned(self, project: Project, token: str, expected_identity: str | None = None) -> tuple[str, dict[str, Any], tuple[Any, ...]]:
+        if expected_identity is not None and not SESSION_ID.fullmatch(expected_identity):
+            raise WorkError("ID de sessão esperado inválido")
         result = self.run("list-panes", "-s", "-t", f"={project.session}", "-F", CAPTURE_FORMAT)
-        return self._parse_capture(project, token, result.stdout)
+        captured = self._parse_capture(project, token, result.stdout)
+        if expected_identity is not None and captured[0] != expected_identity:
+            raise WorkError(f"sessão recusada por recriação durante captura: {project.session}")
+        return captured
+
+    def observe_owned(self, project: Project, token: str, expected_identity: str) -> tuple[PaneObservation, ...]:
+        if not SESSION_ID.fullmatch(expected_identity):
+            raise WorkError("ID de sessão esperado inválido")
+        result = self.run("list-panes", "-s", "-t", f"={project.session}", "-F", OBSERVE_FORMAT)
+        return self._parse_observations(project, token, expected_identity, result.stdout)
+
+    @staticmethod
+    def _classify_command(raw: str, engine: str | None) -> str:
+        if not raw or len(raw) > 128 or CONTROL.search(raw):
+            return "unknown"
+        basename = raw.rsplit("/", 1)[-1]
+        if not COMMAND_BASENAME.fullmatch(basename):
+            return "unknown"
+        lowered = basename.lower()
+        if lowered in SHELL_BASENAMES:
+            return "shell"
+        if engine is not None and lowered in ENGINE_BASENAMES[engine]:
+            return "engine"
+        return "other"
+
+    def _parse_observations(self, project: Project, token: str, expected_identity: str, output: str) -> tuple[PaneObservation, ...]:
+        if len(output.encode("utf-8")) > 1024 * 1024:
+            raise WorkError("tmux retornou observação grande demais")
+        windows = {window.name: window for window in project.windows}
+        observations: list[PaneObservation] = []
+        for line in output.splitlines():
+            fields = tuple(line.split(FIELD_SEPARATOR))
+            if len(fields) != 12 or any(len(field) > 256 or CONTROL.search(field) for field in fields):
+                raise WorkError("tmux retornou observação inválida")
+            session_id, marked_project, marked_token, window_id, window_index, window_name, pane_id, pane_index, activity, raw_command, dead, dead_status = fields
+            if session_id != expected_identity or not SESSION_ID.fullmatch(session_id) or marked_project != project.slug or not secrets.compare_digest(marked_token, token):
+                raise WorkError(f"sessão recusada por ownership inválido: {project.session}")
+            if not WINDOW_ID.fullmatch(window_id) or not PANE_ID.fullmatch(pane_id) or window_name not in windows:
+                raise WorkError("tmux retornou IDs ou janela inválidos na observação")
+            try:
+                parsed_window_index = int(window_index)
+                parsed_pane_index = int(pane_index)
+                parsed_activity = int(activity) if activity else None
+                parsed_dead_status = int(dead_status) if dead_status else None
+            except ValueError as exc:
+                raise WorkError("tmux retornou números inválidos na observação") from exc
+            if parsed_window_index < 0 or parsed_pane_index < 0 or parsed_activity is not None and parsed_activity < 0 or parsed_dead_status is not None and parsed_dead_status < 0:
+                raise WorkError("tmux retornou números negativos na observação")
+            pane_dead = self._flag(dead, "pane morto")
+            command_class = self._classify_command(raw_command, windows[window_name].engine)
+            observations.append(PaneObservation(session_id, window_id, window_name, parsed_window_index, pane_id, parsed_pane_index, parsed_activity, command_class, pane_dead, parsed_dead_status))
+        if not observations:
+            raise WorkError("tmux retornou observação vazia")
+        return tuple(sorted(observations, key=lambda item: (item.window_index, item.pane_index)))
 
     def capture_and_kill_owned(
         self, project: Project, token: str, identity: str

@@ -9,10 +9,14 @@ from .errors import WorkError
 EVENT_FIELDS = {
     "project", "session", "pane", "run", "sequence", "kind", "state", "timestamp",
     "message", "source", "pane_pid", "current_command", "pane_dead", "pane_dead_status",
-    "activity_timestamp", "pane_bytes", "pane_lines", "event_key",
+    "activity_timestamp", "pane_bytes", "pane_lines", "event_key", "window", "window_name",
+    "engine", "confidence", "command_class",
 }
 IDENTIFIER = re.compile(r"\A[A-Za-z0-9_.$:%/@+-]{1,128}\Z")
 KINDS = {"state", "completion", "failure", "input", "heartbeat"}
+SIGNAL_FIELDS = {"project", "session", "pane", "run", "sequence", "kind", "state", "timestamp", "source", "window", "window_name", "engine", "confidence", "command_class", "activity_timestamp", "event_key"}
+SIGNAL_STATES = {"working", "waiting_user", "phase_started", "completed", "failed"}
+MONITOR_EVENT_FIELDS = {"project", "session", "pane", "run", "sequence", "kind", "state", "timestamp", "source", "window", "window_name", "engine", "confidence", "command_class", "activity_timestamp", "event_key", "pane_dead", "pane_dead_status"}
 
 
 def validate_event(value: Any) -> dict[str, Any]:
@@ -28,7 +32,7 @@ def validate_event(value: Any) -> dict[str, Any]:
         raise WorkError("evento.sequence inválido")
     if value["kind"] not in KINDS:
         raise WorkError("evento.kind inválido")
-    for key in ("state", "message", "source"):
+    for key in ("state", "message", "source", "window", "window_name", "engine", "confidence", "command_class"):
         if key in value and (not isinstance(value[key], str) or len(value[key]) > 512 or any(ord(char) < 32 or ord(char) == 127 for char in value[key])):
             raise WorkError(f"evento.{key} inválido")
     for key in ("pane_pid", "pane_dead_status", "activity_timestamp", "pane_bytes", "pane_lines"):
@@ -57,3 +61,20 @@ def decode_event(line: str) -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         raise WorkError("evento não é JSON válido") from exc
     return validate_event(value)
+
+
+def decode_signal(line: str) -> dict[str, Any]:
+    event = decode_event(line)
+    if set(event) - SIGNAL_FIELDS or event.get("kind") != "state" or event.get("state") not in SIGNAL_STATES or event.get("source") != "explicit-signal" or event.get("confidence") != "explicit":
+        raise WorkError("sinal explícito possui schema inválido")
+    required = {"project", "session", "pane", "run", "sequence", "kind", "state", "timestamp", "source", "window", "window_name", "confidence", "command_class"}
+    if not required.issubset(event):
+        raise WorkError("sinal explícito incompleto")
+    return event
+
+
+def validate_monitor_event(value: dict[str, Any]) -> dict[str, Any]:
+    event = validate_event(value)
+    if set(event) - MONITOR_EVENT_FIELDS:
+        raise WorkError("evento do monitor possui campos desconhecidos")
+    return event

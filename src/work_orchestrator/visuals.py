@@ -21,6 +21,12 @@ DEFAULT_VISUALS = (
     ("commands", "Commands", "commands"),
     ("works", "Works", "works"),
 )
+DEFAULT_ENGINES = {
+    "dev1-markscode": "markscode",
+    "dev2-opencode": "opencode",
+    "dev3-codex": "codex",
+    "dev4-claude": "claude",
+}
 LEGACY_VISUALS = tuple((visual_id, title, "apoio" if visual_id == "works" else "dev") for visual_id, title, _ in DEFAULT_VISUALS)
 _HEADER = re.compile(r"^\s*(\[\[?[^\]]+\]\]?)\s*(?:#.*)?$")
 
@@ -51,12 +57,10 @@ def default_windows_toml() -> str:
             "[[windows]]",
             f"name = {json.dumps(window)}",
             f"focus = {'true' if index == 0 else 'false'}",
-            "",
-            "[[windows.panes]]",
-            'name = "shell"',
-            "focus = true",
-            "",
         ))
+        if window in DEFAULT_ENGINES:
+            lines.append(f"engine = {json.dumps(DEFAULT_ENGINES[window])}")
+        lines.extend(("", "[[windows.panes]]", 'name = "shell"', "focus = true", ""))
     return "\n".join(lines)
 
 
@@ -81,10 +85,51 @@ def _legacy_shape(project: Any) -> bool:
     return all(pane.cwd == project.root and pane.command is None for window in project.windows for pane in window.panes)
 
 
+def _recommended_shape_without_engines(project: Any) -> bool:
+    if [(visual.id, visual.title, visual.window) for visual in project.visuals] != list(DEFAULT_VISUALS):
+        return False
+    if [window.name for window in project.windows] != [item[0] for item in DEFAULT_VISUALS]:
+        return False
+    for index, window in enumerate(project.windows):
+        if window.engine is not None or window.cwd != project.root or window.layout is not None or window.focus != (index == 0) or len(window.panes) != 1:
+            return False
+        pane = window.panes[0]
+        if pane.cwd != project.root or pane.name != "shell" or pane.command is not None or not pane.focus:
+            return False
+    return True
+
+
+def _add_recommended_engines(text: str) -> str:
+    lines = text.splitlines(keepends=True)
+    current_window = None
+    output: list[str] = []
+    for line in lines:
+        header = _HEADER.match(line.rstrip("\r\n"))
+        if header and header.group(1) == "[[windows]]":
+            current_window = None
+        output.append(line)
+        match = re.fullmatch(r'(\s*name\s*=\s*")([^"]+)("\s*(?:#.*)?)(\r?\n)?', line)
+        if match and current_window is None and match.group(2) in DEFAULT_ENGINES:
+            current_window = match.group(2)
+            newline = match.group(4) or "\n"
+            output.append(f'engine = "{DEFAULT_ENGINES[current_window]}"{newline}')
+    return "".join(output)
+
+
 def transform_legacy_default_toml(paths: Paths, slug: str, payload: bytes) -> tuple[bytes | None, str]:
     project = parse_project(paths, slug, payload)
+    if _recommended_shape_without_engines(project):
+        try:
+            text = payload.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise WorkError("configuração recommended inválida") from exc
+        replacement = _add_recommended_engines(text).encode("utf-8")
+        parse_project(paths, slug, replacement)
+        return replacement, "topologia recommended de seis janelas recebeu somente metadata engine"
     if [(visual.id, visual.title, visual.window) for visual in project.visuals] == list(DEFAULT_VISUALS) and [window.name for window in project.windows] == [item[0] for item in DEFAULT_VISUALS]:
-        return None, "topologia recommended de seis janelas já aplicada"
+        if all(window.engine == DEFAULT_ENGINES.get(window.name) for window in project.windows) and all(window.cwd == project.root and window.layout is None and window.focus == (index == 0) and len(window.panes) == 1 and window.panes[0].cwd == project.root and window.panes[0].name == "shell" and window.panes[0].command is None and window.panes[0].focus for index, window in enumerate(project.windows)):
+            return None, "topologia recommended de seis janelas já aplicada"
+        return None, "topologia customizada ou diferente do padrão recommended exato; nenhuma alteração"
     if not _legacy_shape(project):
         return None, "topologia customizada ou diferente do padrão legado exato; nenhuma alteração"
     try:

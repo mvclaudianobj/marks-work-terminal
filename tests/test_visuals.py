@@ -13,7 +13,7 @@ from work_orchestrator.errors import WorkError
 from work_orchestrator.paths import Paths
 from work_orchestrator.store import snapshot_path, write_atomic
 from work_orchestrator.tmux import Tmux
-from work_orchestrator.visuals import DEFAULT_VISUALS, LEGACY_VISUALS, migrate_default_visuals, transform_legacy_snapshot
+from work_orchestrator.visuals import DEFAULT_ENGINES, DEFAULT_VISUALS, LEGACY_VISUALS, default_visuals_toml, migrate_default_visuals, transform_legacy_snapshot
 
 
 class VisualDefaultsTests(unittest.TestCase):
@@ -85,6 +85,32 @@ class VisualDefaultsTests(unittest.TestCase):
         result = migrate_default_visuals(self.paths, project="alpha", dry_run=True)
         self.assertEqual(result[0]["action"], "skipped")
         self.assertIn("customizada", result[0]["reason"])
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_migration_adds_only_engine_metadata_to_exact_six_window_layout(self):
+        path = self.paths.config / "alpha.toml"
+        windows = []
+        for index, (name, _, _) in enumerate(DEFAULT_VISUALS):
+            windows.extend(("[[windows]]", f'name = "{name}"', f'focus = {str(index == 0).lower()}', "", "[[windows.panes]]", 'name = "shell"', "focus = true", ""))
+        payload = (f'[project]\nroot = "{self.root}"\n\n' + default_visuals_toml("alpha") + "\n" + "\n".join(windows)).encode()
+        path.write_bytes(payload)
+        path.chmod(0o600)
+        before = tomllib.loads(payload.decode())
+        result = migrate_default_visuals(self.paths, project="alpha", yes=True)
+        after = tomllib.loads(path.read_text())
+        self.assertEqual(result[0]["action"], "migrated")
+        self.assertEqual(after["project"], before["project"])
+        self.assertEqual([(item["name"], item.get("engine"), item["panes"]) for item in after["windows"]], [(item["name"], DEFAULT_ENGINES.get(item["name"]), item["panes"]) for item in before["windows"]])
+        self.assertEqual(migrate_default_visuals(self.paths, project="alpha", yes=True)[0]["action"], "unchanged")
+
+    def test_engine_metadata_migration_skips_custom_six_window_layout(self):
+        path = init_project(self.paths, "alpha", self.root, "Alpha", "recommended")
+        text = path.read_text().replace('engine = "markscode"\n', "", 1).replace('name = "shell"', 'name = "custom"', 1)
+        path.write_text(text)
+        path.chmod(0o600)
+        original = path.read_bytes()
+        result = migrate_default_visuals(self.paths, project="alpha", dry_run=True)
+        self.assertEqual(result[0]["action"], "skipped")
         self.assertEqual(path.read_bytes(), original)
 
     def test_inactive_snapshot_is_migrated_metadata_only_with_backup(self):

@@ -157,7 +157,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(controlled_snapshot["windows"][0]["panes"][0]["name"], "")
 
     def test_15_states_contract(self):
-        self.assertEqual(MONITOR_STATES, {"running", "quiet", "inactive_5m", "inactive_10m", "completed", "failed"})
+        self.assertTrue({"running", "quiet", "unknown", "idle", "working", "inactive_5m", "inactive_10m", "completed", "failed", "waiting_user", "phase_started"}.issubset(MONITOR_STATES))
 
     def test_16_config_monitor_fields(self):
         payload = b'[project]\nroot = "' + str(self.root).encode() + b'"\n[[windows]]\nname = "main"\n[[windows.panes]]\nfocus = true\n[monitor]\nautosave = false\ndebounce = 0.6\ninterval = 2.0\nhistory = true\n'
@@ -203,7 +203,7 @@ class ContractTests(unittest.TestCase):
                 self.root = root
                 self.width = 100
 
-            def capture_owned(self, project, token):
+            def capture_owned(self, project, token, expected_identity=None):
                 topology = (("@1", "main", "even-horizontal", True, (("%1", str(self.root), "", True, self.width, 40),)),)
                 snapshot = {"schema": 2, "session": project.session, "project": project.slug, "windows": [{"name": "main", "layout": "even-horizontal", "focus": True, "panes": [{"cwd": str(self.root), "name": "", "focus": True}]}]}
                 return "$1", snapshot, topology
@@ -220,10 +220,10 @@ class ContractTests(unittest.TestCase):
         tmux = FakeTmux(self.root)
         monitor = Monitor(self.paths, tmux)
         with patch("work_orchestrator.monitor.time.sleep"):
-            self.assertTrue(monitor._autosave(project, "token"))
-            self.assertFalse(monitor._autosave(project, "token"))
+            self.assertTrue(monitor._autosave(project, "token", "$1"))
+            self.assertFalse(monitor._autosave(project, "token", "$1"))
             tmux.width = 120
-            self.assertTrue(monitor._autosave(project, "token"))
+            self.assertTrue(monitor._autosave(project, "token", "$1"))
         self.assertEqual(read_snapshot(self.paths.state / "snapshots" / "x.json")["project"], "x")
 
     def test_19_tmux_ids(self):

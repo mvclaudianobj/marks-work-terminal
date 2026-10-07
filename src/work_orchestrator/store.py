@@ -39,11 +39,23 @@ def observability_dedup_path(state: Path, slug: str) -> Path:
     return state / "observability" / f"{slug}.dedup"
 
 
+def observability_signal_path(state: Path, slug: str) -> Path:
+    return state / "observability" / f"{slug}.signals.jsonl"
+
+
+def observability_signal_processing_path(state: Path, slug: str) -> Path:
+    return state / "observability" / f"{slug}.signals.processing"
+
+
+def observability_agentic_state_path(state: Path, slug: str) -> Path:
+    return state / "observability" / f"{slug}.agentic-state.json"
+
+
 def _identity(details: os.stat_result) -> tuple[int, int, int, int, int, int, int, int, int]:
     return (details.st_dev, details.st_ino, details.st_uid, details.st_gid, details.st_mode, details.st_size, details.st_mtime_ns, details.st_ctime_ns, details.st_nlink)
 
 
-def append_observation(path: Path, payload: bytes, max_bytes: int = 1024 * 1024, expected_fingerprint: str | None = None) -> None:
+def append_observation(path: Path, payload: bytes, max_bytes: int = 1024 * 1024, expected_fingerprint: str | None = None, rotate: bool = True) -> None:
     ensure_private_directory(path.parent)
     if len(payload) > 16384 or not payload.endswith(b"\n"):
         raise WorkError("evento de observabilidade excede o limite")
@@ -66,6 +78,8 @@ def append_observation(path: Path, payload: bytes, max_bytes: int = 1024 * 1024,
         finally:
             os.close(descriptor)
         if current_details.st_size + len(payload) > max_bytes:
+            if not rotate:
+                raise WorkError(f"arquivo excederia o limite: {path}")
             rotated = path.with_suffix(path.suffix + ".1")
             if rotated.exists() or rotated.is_symlink():
                 ensure_regular_private_file(rotated)
@@ -93,6 +107,10 @@ def append_observation(path: Path, payload: bytes, max_bytes: int = 1024 * 1024,
     _fsync_directory(path.parent)
 
 
+def append_spool(path: Path, payload: bytes, max_bytes: int = 1024 * 1024) -> None:
+    append_observation(path, payload, max_bytes=max_bytes, rotate=False)
+
+
 def _fsync_directory(path: Path) -> None:
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(path, flags)
@@ -100,6 +118,22 @@ def _fsync_directory(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def rename_private_file(source: Path, destination: Path) -> None:
+    ensure_private_directory(source.parent)
+    if source.parent != destination.parent or destination.exists() or destination.is_symlink():
+        raise WorkError("destino de rename privado inválido")
+    ensure_regular_private_file(source)
+    os.replace(source, destination)
+    ensure_regular_private_file(destination)
+    _fsync_directory(destination.parent)
+
+
+def unlink_private_file(path: Path) -> None:
+    ensure_regular_private_file(path)
+    path.unlink()
+    _fsync_directory(path.parent)
 
 
 @contextmanager

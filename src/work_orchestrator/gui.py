@@ -19,7 +19,7 @@ from .errors import WorkError
 from .monitor import Monitor
 from .locking import project_lock
 from .logging_utils import LOG_LIMIT, append_log, redact
-from .paths import Paths, ensure_private_directory, validate_slug
+from .paths import Paths, ensure_private_directory, validate_slug, validate_trusted_executable
 from .service import Service
 from .runtime import ENGINES, Runtime
 
@@ -109,20 +109,20 @@ def sort_projects(items: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _work_executable() -> Path:
     override = os.environ.get("WORK_EXECUTABLE")
-    candidate = Path(override).expanduser() if override else Path(__file__).resolve().parents[2] / "bin" / "work"
+    checkout_root = Path(__file__).resolve(strict=True).parents[2]
+    candidate = Path(override).expanduser() if override else checkout_root / "bin" / "work"
     if not candidate.is_absolute():
         raise WorkError("WORK_EXECUTABLE deve ser absoluto")
-    try:
-        details = candidate.lstat()
-    except (OSError, RuntimeError) as exc:
-        raise WorkError("executável work não foi encontrado") from exc
     allowed_owners = {os.geteuid(), 0}
-    if (stat.S_ISLNK(details.st_mode) or not stat.S_ISREG(details.st_mode)
-            or details.st_uid not in allowed_owners
-            or stat.S_IMODE(details.st_mode) & 0o022
-            or not stat.S_IXUSR & details.st_mode):
-        raise WorkError(f"executável work inseguro: {candidate}")
-    return candidate
+    try:
+        return validate_trusted_executable(candidate, checkout_root=checkout_root, allowed_owners=allowed_owners)
+    except WorkError:
+        if os.geteuid() != 0:
+            raise
+    identity = _root_launch_identity()
+    if identity is None:
+        raise WorkError("identidade root-like não resolvida")
+    return validate_trusted_executable(candidate, checkout_root=checkout_root, allowed_owners=allowed_owners | {identity[0].pw_uid})
 
 
 def _root_launch_identity() -> tuple[pwd.struct_passwd, Path] | None:

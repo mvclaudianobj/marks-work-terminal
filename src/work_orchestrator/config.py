@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import WorkError
-from .model import MONITOR_STATES, POLICIES, MonitorConfig, Pane, Project, Visual, Window
+from .model import ENGINES, MONITOR_STATES, POLICIES, MonitorConfig, Pane, Project, Visual, Window
 from .paths import Paths, safe_child, validate_slug
 from .store import read_private_bytes
 
@@ -101,7 +101,7 @@ def _monitor_config(value: Any, label: str = "monitor") -> MonitorConfig:
     if value is None:
         return MonitorConfig()
     table = _table(value, label)
-    allowed = {"autosave", "debounce", "interval", "history", "idle_warning_seconds", "idle_attention_seconds", "states"}
+    allowed = {"autosave", "debounce", "interval", "history", "agentic", "notify_working", "idle_warning_seconds", "idle_attention_seconds", "states"}
     unknown = set(table) - allowed
     if unknown:
         raise WorkError(f"chaves desconhecidas em monitor: {', '.join(sorted(unknown))}")
@@ -116,8 +116,10 @@ def _monitor_config(value: Any, label: str = "monitor") -> MonitorConfig:
     if not isinstance(states, list) or not states or any(not isinstance(item, str) or item not in MONITOR_STATES for item in states) or len(set(states)) != len(states):
         raise WorkError("monitor.states contém estados inválidos ou duplicados")
     autosave = table.get("autosave", True)
-    if type(autosave) is not bool or type(history) is not bool:
-        raise WorkError("monitor.autosave ou monitor.history inválido")
+    agentic = table.get("agentic", False)
+    notify_working = table.get("notify_working", False)
+    if type(autosave) is not bool or type(history) is not bool or type(agentic) is not bool or type(notify_working) is not bool:
+        raise WorkError("booleano de monitor inválido")
     if type(debounce) not in {int, float} or not 0.5 <= debounce <= 1.0:
         raise WorkError("monitor.debounce inválido")
     if type(interval) not in {int, float} or not 0.1 <= interval <= 86400:
@@ -127,6 +129,8 @@ def _monitor_config(value: Any, label: str = "monitor") -> MonitorConfig:
         debounce=float(debounce),
         interval=float(interval),
         history=history,
+        agentic=agentic,
+        notify_working=notify_working,
         idle_warning_seconds=warning,
         idle_attention_seconds=attention,
         states=tuple(states),
@@ -172,7 +176,7 @@ def parse_project(paths: Paths, slug: str, payload: bytes) -> Project:
     focused_windows = 0
     for wi, item in enumerate(windows_raw):
         window = _table(item, f"windows[{wi}]")
-        allowed_window = {"name", "cwd", "layout", "focus", "panes"}
+        allowed_window = {"name", "cwd", "layout", "focus", "engine", "panes"}
         unknown = set(window) - allowed_window
         if unknown:
             raise WorkError(f"chaves desconhecidas em windows[{wi}]: {', '.join(sorted(unknown))}")
@@ -183,6 +187,9 @@ def parse_project(paths: Paths, slug: str, payload: bytes) -> Project:
         window_cwd = _cwd(window.get("cwd", str(root)), f"windows[{wi}].cwd", root)
         layout = _string(window.get("layout"), f"windows[{wi}].layout", required=False)
         window_focus = _boolean(window.get("focus", wi == 0), f"windows[{wi}].focus")
+        engine = _string(window.get("engine"), f"windows[{wi}].engine", required=False)
+        if engine is not None and engine not in ENGINES:
+            raise WorkError(f"windows[{wi}].engine inválida")
         focused_windows += int(window_focus)
         panes_raw = window.get("panes", [{}])
         if not isinstance(panes_raw, list) or not panes_raw:
@@ -204,7 +211,7 @@ def parse_project(paths: Paths, slug: str, payload: bytes) -> Project:
             panes.append(Pane(pane_cwd, pane_name, command, policy, pane_focus))
         if focused_panes != 1:
             raise WorkError(f"janela {window_name} deve ter exatamente um pane com focus=true")
-        windows.append(Window(window_name, window_cwd, layout, tuple(panes), window_focus))
+        windows.append(Window(window_name, window_cwd, layout, tuple(panes), window_focus, engine))
     if focused_windows != 1:
         raise WorkError("deve haver exatamente uma janela com focus=true")
     visuals_raw = raw.get("visuals", [])

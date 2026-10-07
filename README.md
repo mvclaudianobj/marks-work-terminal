@@ -61,6 +61,38 @@ Launchers gráficos executáveis diretamente do checkout:
 
 `work-gui-monitor` seleciona projetos pela API interna e oferece status, início e parada do monitor sem abrir Terminator. O início só ocorre quando o marker informa que não há monitor ativo; o processo usa o executável absoluto do checkout, `--interval 5`, stdin nulo, sessão independente e log privado limitado. A parada usa exclusivamente `Monitor.stop()` e sua validação por pidfd; cancelamentos retornam sucesso.
 
+## Notificações agênticas por aba
+
+A observação agêntica é opt-in e permanece desligada em configurações existentes. Para um canário controlado, declare `agentic = true` em `[monitor]`; `notify_working = false` continua sendo o padrão e evita notificações de retomada/início de trabalho. Os limiares `idle_warning_seconds` e `idle_attention_seconds` continuam definindo inatividade. Não execute a migração nem inicie o monitor em todos os projetos de uma vez.
+
+```toml
+[monitor]
+agentic = true
+notify_working = false
+idle_warning_seconds = 300
+idle_attention_seconds = 600
+
+[[windows]]
+name = "dev2-opencode"
+engine = "opencode"
+```
+
+`engine` é opcional e aceita somente `markscode`, `opencode`, `codex` ou `claude`. O layout `recommended` declara essas engines nas quatro janelas dev; `commands` e `works` permanecem sem engine. Configurações antigas sem `engine` continuam válidas.
+
+O monitor agêntico usa somente IDs de sessão/janela/pane, índices, `pane_activity`, classe redigida do comando (`shell`, `engine`, `other` ou `unknown`) e estado de pane morto. O tmux precisa fornecer `pane_current_command` ao parser para a classificação local; esse valor bruto existe apenas durante o parsing da resposta, é descartado imediatamente e nunca integra objetos de domínio, exceptions, journal, spool, status, logs ou notificações. O fluxo não usa `capture-pane`, título, cwd, PID, argv, ambiente, prompt ou scrollback. `pane_activity` ausente permanece desconhecido e nunca é substituído pela hora atual.
+
+As transições `shell` para processo não-shell e não-shell para `shell` após trabalho são heurísticas. Elas podem indicar `working` e `completed`, mas não inferem `waiting_user` nem nova fase. Estados semânticos confiáveis usam o protocolo explícito local:
+
+```sh
+./bin/work signal meu-projeto --window dev2-opencode --state working
+./bin/work signal meu-projeto --window dev2-opencode --state waiting-user
+./bin/work signal meu-projeto --window dev2-opencode --state phase-started
+./bin/work signal meu-projeto --window dev2-opencode --state completed
+./bin/work signal meu-projeto --window dev2-opencode --state failed
+```
+
+O comando valida projeto, sessão owned/token e janela declarada/existente. Não aceita mensagem nem fase livre. O sinal entra em spool privado `0600` dentro de diretório `0700`; append acima do limite é recusado sem rotação. O consumidor move atomicamente o lote para processamento e usa uma outbox durável, mantendo a entrega pendente quando `notify-send` falha ou quando ocorre exceção, para retry bounded sem perda intencional. A semântica é at-least-once: um crash depois de `notify-send` aceitar a notificação e antes do checkpoint durável pode causar duplicação; não há garantia exactly-once. Linhas corrompidas ou fora do schema são isoladas sem derrubar o monitor. `work monitor status <projeto>` preserva os campos anteriores e, quando `agentic = true`, acrescenta o evento mais recente do run atual por nome de janela. Título de notificação contém somente projeto, aba/visual e engine declarada; o corpo pertence a uma enumeração estática.
+
 `work-gui-save` seleciona projetos tmux ativos/owned e publica um snapshot com timestamp. Cancelamento retorna sucesso, não abre Terminator e não salva abas nativas do Terminator. Snapshots pertencem ao projeto tmux; abas e layout nativos do Terminator ficam fora do contrato.
 
 `work-gui-agent` seleciona um projeto configurado, engine (`markscode`, `claude`, `opencode` ou `codex`) e modo `prepare` ou `start`. O fluxo exibe root, worktree, branch, estado e conflitos como metadata-only; registra identity/session, handoff e bundle de contexto via runtime e adquire claim obrigatório. Caminhos disjuntos são permitidos, caminhos sobrepostos exigem `shared-readonly` e claims de escrita conflitantes são recusados. O modo `prepare` não inicia engine; o modo `start` exige lease do projeto e confirmação explícita final com executável, argv sanitizado, cwd e política. Só depois disso usa argv absoluto, `start_new_session`, ambiente allowlisted, stdin nulo e log privado limitado/redigido. Cancelamento libera claim/lease e não chama subprocesso de engine.
