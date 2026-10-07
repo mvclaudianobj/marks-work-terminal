@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Monitorar Projeto
+Comment=Inicia, consulta e para o monitor de um projeto
+Exec=work-gui-monitor
+TryExec=work-gui-monitor
+Icon=utilities-system-monitor
+Terminal=false
+Categories=Development;

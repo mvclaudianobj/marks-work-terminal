@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+script=$(/usr/bin/readlink -f -- "$0")
+root=${script%/bin/*}
+PYTHONPATH="$root/src${PYTHONPATH:+:$PYTHONPATH}" exec /usr/bin/python3 -c 'import sys; sys.argv[0] = sys.argv.pop(1); from work_orchestrator.gui import workspace_main; raise SystemExit(workspace_main())' "$script" "$@"

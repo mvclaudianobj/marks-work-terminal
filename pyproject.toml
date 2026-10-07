@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "work-orchestrator"
+version = "0.1.0"
+description = "Orquestrador declarativo e seguro de sessões tmux"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+work = "work_orchestrator.cli:main"
+work-gui-load = "work_orchestrator.gui:load_main"
+work-gui-new = "work_orchestrator.gui:new_main"
+work-gui-edit = "work_orchestrator.gui:edit_main"
+work-gui-monitor = "work_orchestrator.gui:monitor_main"
+work-gui-save = "work_orchestrator.gui:save_main"
+work-gui-workspace = "work_orchestrator.gui:workspace_main"
+work-gui-agent = "work_orchestrator.gui:agent_main"
+work-gui-handoff = "work_orchestrator.gui:handoff_main"
+work-gui-context = "work_orchestrator.gui:context_main"
+work-gui-menu = "work_orchestrator.gui:menu_main"
+work-hook-detach = "work_orchestrator.hook:detach_main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

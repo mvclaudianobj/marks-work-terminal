@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Agente Work Orchestrator
+Comment=Prepara ou inicia um agente com claims e lease
+Exec=work-gui-agent
+TryExec=work-gui-agent
+Icon=system-run
+Terminal=false
+Categories=Development;

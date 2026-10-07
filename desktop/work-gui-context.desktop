@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Contexto de Agente
+Comment=Prepara identidade e bundle de contexto de um agente
+Exec=work-gui-context
+TryExec=work-gui-context
+Icon=document-preview
+Terminal=false
+Categories=Development;

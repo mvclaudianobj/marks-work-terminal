@@ -1,0 +1,2 @@
+class WorkError(Exception):
+    pass

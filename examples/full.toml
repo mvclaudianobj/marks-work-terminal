@@ -1,0 +1,33 @@
+[project]
+name = "Projeto completo"
+root = "/caminho/absoluto/do/projeto"
+session = "work-projeto"
+command_policy = "prompt"
+
+[[windows]]
+name = "editor"
+cwd = "."
+layout = "even-horizontal"
+focus = true
+
+[[windows.panes]]
+name = "codigo"
+cwd = "."
+command = ["python3", "-m", "http.server", "8000"]
+policy = "never"
+focus = true
+
+[[windows.panes]]
+name = "shell"
+cwd = "."
+focus = false
+
+[[windows]]
+name = "logs"
+cwd = "."
+focus = false
+
+[[windows.panes]]
+name = "observacao"
+cwd = "."
+focus = true

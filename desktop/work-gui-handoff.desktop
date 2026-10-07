@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Handoff de Agente
+Comment=Prepara identidade e handoff de um agente
+Exec=work-gui-handoff
+TryExec=work-gui-handoff
+Icon=document-send
+Terminal=false
+Categories=Development;

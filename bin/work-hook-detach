@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+script=$(readlink -f "$0")
+root=$(CDPATH= cd -- "$(dirname -- "$script")/.." && pwd)
+PYTHONPATH="$root/src${PYTHONPATH:+:$PYTHONPATH}" exec python3 -c 'from work_orchestrator.hook import detach_main; raise SystemExit(detach_main())' "$@"

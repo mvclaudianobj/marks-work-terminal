@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Workspaces
+Comment=Salvar e restaurar workspaces do Work Orchestrator
+Exec=work-gui-workspace
+TryExec=work-gui-workspace
+Icon=folder-open
+Terminal=false
+Categories=Development;

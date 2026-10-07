@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Carregar projeto de trabalho
+Comment=Abre um projeto do Work Orchestrator no Terminator
+Exec=work-gui-load
+TryExec=work-gui-load
+Icon=folder-open
+Terminal=false
+Categories=Development;

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Work Orchestrator
+Comment=Menu único com todas as ações do Work Orchestrator (Carregar, Criar, Editar, Monitor, Salvar, Workspace, Agent)
+Exec=work-gui-menu
+TryExec=work-gui-menu
+Icon=system-run
+Terminal=false
+Categories=Development;

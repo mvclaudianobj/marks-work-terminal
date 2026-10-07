@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Salvar Projeto
+Comment=Salva o snapshot do projeto tmux ativo
+Exec=work-gui-save
+TryExec=work-gui-save
+Icon=document-save
+Terminal=false
+Categories=Development;

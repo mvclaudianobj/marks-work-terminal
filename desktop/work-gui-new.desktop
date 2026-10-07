@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Novo projeto de trabalho
+Comment=Cria um projeto do Work Orchestrator e abre no Terminator
+Exec=work-gui-new
+TryExec=work-gui-new
+Icon=folder-new
+Terminal=false
+Categories=Development;

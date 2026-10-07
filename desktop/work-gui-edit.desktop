@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Editar projeto de trabalho
+Comment=Edita com segurança nome, raiz e política de um projeto
+Exec=work-gui-edit
+TryExec=work-gui-edit
+Icon=document-edit
+Terminal=false
+Categories=Development;
