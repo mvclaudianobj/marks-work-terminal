@@ -4,8 +4,9 @@ import os
 import sys
 from pathlib import Path
 
-from .config import config_path
+from .config import config_path, load_project
 from .history import append as append_history, read as read_history
+from .integration import read_integration_events
 from .errors import WorkError
 from .paths import Paths, ensure_regular_private_file, validate_slug
 from .store import write_bytes_atomic
@@ -16,6 +17,8 @@ from .runtime import Runtime
 from .agent import use as use_agent
 from .context import compile_context
 from .visuals import default_recommended_toml, migrate_default_visuals
+from .scaffold import create_project_scaffold
+from .vault import vault_init, vault_edit, vault_show, vault_get, vault_delete, set_master_password
 
 
 def parser() -> argparse.ArgumentParser:
@@ -85,6 +88,12 @@ def parser() -> argparse.ArgumentParser:
     signal_command.add_argument("slug")
     signal_command.add_argument("--window", required=True)
     signal_command.add_argument("--state", required=True, choices=("working", "waiting-user", "phase-started", "completed", "failed"))
+    integration = sub.add_parser("integration", help="consome envelopes metadata-only")
+    integration_sub = integration.add_subparsers(dest="integration_command", required=True)
+    integration_events = integration_sub.add_parser("events")
+    integration_events.add_argument("slug")
+    integration_events.add_argument("--after", type=int, default=-1)
+    integration_events.add_argument("--limit", type=int, default=100)
     notify = sub.add_parser("notify", help="notificações locais")
     notify_sub = notify.add_subparsers(dest="notify_command", required=True)
     notify_sub.add_parser("test")
@@ -92,6 +101,20 @@ def parser() -> argparse.ArgumentParser:
     runtime_sub = runtime.add_subparsers(dest="runtime_command", required=True)
     runtime_status = runtime_sub.add_parser("status")
     runtime_status.add_argument("project", type=Path)
+    vault_cmd = sub.add_parser("vault", help="gerencia cofre de credenciais do projeto")
+    vault_sub = vault_cmd.add_subparsers(dest="vault_command", required=True)
+    vault_init_p = vault_sub.add_parser("init", help="inicializa cofre vazio cifrado")
+    vault_init_p.add_argument("slug")
+    vault_edit_p = vault_sub.add_parser("edit", help="edita cofre de credenciais")
+    vault_edit_p.add_argument("slug")
+    vault_show_p = vault_sub.add_parser("show", help="exibe cofre descriptografado")
+    vault_show_p.add_argument("slug")
+    vault_delete_p = vault_sub.add_parser("delete", help="remove cofre permanentemente")
+    vault_delete_p.add_argument("slug")
+    vault_get_p = vault_sub.add_parser("get", help="obtém valor de uma chave do cofre")
+    vault_get_p.add_argument("slug")
+    vault_get_p.add_argument("key", help="nome da chave a buscar (ex: 'work360-url', 'Token PAT')")
+    vault_sub.add_parser("set-master", help="define ou troca a senha mestra do cofre")
     agent = sub.add_parser("agent")
     agent_sub = agent.add_subparsers(dest="agent_command", required=True)
     agent_list = agent_sub.add_parser("list")
@@ -212,6 +235,7 @@ def init_project(paths: Paths, slug: str, root: Path, name: str | None = None, l
         ))
     body = "\n".join(lines)
     write_bytes_atomic(path, body.encode("utf-8"), exclusive=True)
+    create_project_scaffold(root, slug, name)
     return path
 
 
@@ -236,9 +260,42 @@ def main(argv: list[str] | None = None) -> None:
             if args.notify_command == "test":
                 notify_or_log("work-orchestrator", "notificação de teste")
                 return
+        if args.command == "integration":
+            slug = validate_slug(args.slug)
+            project = load_project(paths, slug)
+            monitor = Monitor(paths)
+            token = monitor.tmux.ownership_token(project)
+            monitor.tmux.owned_identity(project, token)
+            for event in read_integration_events(paths.state, paths.runtime, slug, after=args.after, limit=args.limit):
+                print(json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+            return
         if args.command == "runtime":
             print(json.dumps(Runtime(args.project).status(), ensure_ascii=False, indent=2))
             return
+        if args.command == "vault":
+            hash_file = paths.config.parent / "vault-master.hash"
+            if args.vault_command == "set-master":
+                set_master_password(hash_file)
+                return
+            project = load_project(paths, args.slug)
+            root = Path(project.root)
+            if args.vault_command == "init":
+                vault_init(root, args.slug, hash_file=hash_file)
+                print(f"cofre inicializado: {root}/.work/KEYS.md.gpg")
+                return
+            if args.vault_command == "edit":
+                vault_edit(root, args.slug, hash_file)
+                return
+            if args.vault_command == "show":
+                print(vault_show(root, args.slug, hash_file))
+                return
+            if args.vault_command == "get":
+                print(vault_get(root, args.slug, args.key, hash_file))
+                return
+            if args.vault_command == "delete":
+                vault_delete(root, args.slug, hash_file)
+                print(f"cofre removido: {root}/.work/KEYS.md.gpg")
+                return
         if args.command == "agent":
             if args.agent_command == "list":
                 print(json.dumps(Runtime(args.project).agents(), ensure_ascii=False, indent=2))

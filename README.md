@@ -63,6 +63,20 @@ Launchers gráficos executáveis diretamente do checkout:
 
 ## Notificações agênticas por aba
 
+### Envelope externo metadata-only (`work.events.v1`)
+
+Quando a observação agêntica já habilitada valida uma sessão owned, o monitor também produz um journal de integração separado em `XDG_STATE_HOME/work-orchestrator/integration-events/<slug>.jsonl`. Isso não habilita `agentic`, não inicia monitor, não altera autosave, inferência, notificações, defaults ou configuração, e não publica em `Runtime.events`.
+
+Cada linha é um envelope JSON estrito com `schema,event_id,type,producer,project,session,run,sequence,timestamp,subject,data`. O schema é literalmente `work.events.v1`, o producer é `work-monitor`, `event_id` é SHA-256 determinístico do restante do envelope e os tipos permitidos são `work.monitor.started`, `work.run.changed`, `work.window.observed`, `work.window.signal` e `work.monitor.stopped`. `subject` aceita apenas os identificadores `window`, `window_name` e `pane`; `data` possui allowlist positiva por tipo. Observações expõem somente `engine` opcional, `command_class`, `activity_timestamp`, `pane_dead` e `pane_dead_status`; sinais explícitos expõem somente `state`, `confidence = "explicit"` e `engine` opcional. Comandos, títulos, cwd, PID, argv, ambiente, prompt, scrollback, conteúdo e mensagens livres são proibidos.
+
+O journal é privado (`0700` no diretório, `0600` nos arquivos), limitado e rotativo, com lock e validação contra symlink/hardlink. Falhas desse sink são isoladas e registradas sem payload em log privado: autosave e o journal/notificações legados continuam operando. O consumo incremental valida configuração e ownership da sessão e não aceita caminho arbitrário:
+
+```sh
+./bin/work integration events meu-projeto --after 120 --limit 100
+```
+
+O resultado é JSON Lines em ordem de sequência; `--after` é exclusivo.
+
 A observação agêntica é opt-in e permanece desligada em configurações existentes. Para um canário controlado, declare `agentic = true` em `[monitor]`; `notify_working = false` continua sendo o padrão e evita notificações de retomada/início de trabalho. Os limiares `idle_warning_seconds` e `idle_attention_seconds` continuam definindo inatividade. Não execute a migração nem inicie o monitor em todos os projetos de uma vez.
 
 ```toml

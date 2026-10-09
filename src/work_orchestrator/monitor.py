@@ -10,7 +10,9 @@ from typing import Any
 from .config import load_project
 from .errors import WorkError
 from .events import decode_event, decode_signal, encode_event, validate_monitor_event
+from .integration import append_integration_event, latest_integration_run
 from .locking import observability_lock, project_locks
+from .logging_utils import append_log
 from .model import PaneObservation, Project
 from .notifier import notify_or_log
 from .paths import Paths, validate_slug
@@ -37,6 +39,33 @@ class Monitor:
         self._signatures: dict[str, tuple[Any, ...]] = {}
         self._workspace_signatures: dict[str, str] = {}
         self._notification_times: dict[tuple[str, str, str], float] = {}
+        self._integration_runs: dict[str, str] = {}
+        self._integration_started: set[str] = set()
+
+    def _publish_integration(self, project: Project, identity: str, event_type: str, subject: dict[str, Any], data: dict[str, Any]) -> bool:
+        try:
+            append_integration_event(self.paths.state, self.paths.runtime, project.slug, event_type, project.session, identity, subject, data)
+            return True
+        except (WorkError, OSError) as exc:
+            try:
+                append_log(self.paths.state / "logs" / "integration-events.log", f"falha isolada no sink de integração: {type(exc).__name__}")
+            except OSError:
+                pass
+            return False
+
+    def _begin_integration(self, project: Project, identity: str) -> None:
+        previous = self._integration_runs.get(project.slug)
+        if previous is None:
+            try:
+                previous = latest_integration_run(self.paths.state, self.paths.runtime, project.slug)
+            except (WorkError, OSError):
+                previous = None
+        if project.slug not in self._integration_started:
+            if self._publish_integration(project, identity, "work.monitor.started", {}, {"reason": "first_observation"}):
+                self._integration_started.add(project.slug)
+        if previous is not None and previous != identity:
+            self._publish_integration(project, identity, "work.run.changed", {}, {"reason": "identity_changed", "previous_run": previous})
+        self._integration_runs[project.slug] = identity
 
     def _stable_signature(self, topology: tuple[Any, ...]) -> tuple[Any, ...]:
         return tuple(
@@ -264,6 +293,7 @@ class Monitor:
 
     def _inspect_agentic(self, project: Project, token: str, identity: str) -> list[dict[str, Any]]:
         observations = self.tmux.observe_owned(project, token, identity)
+        self._begin_integration(project, identity)
         latest = self._agentic_previous(project, identity)
         self._retry_deliveries(project, identity, latest)
         grouped: dict[str, list[PaneObservation]] = {}
@@ -272,6 +302,12 @@ class Monitor:
         now = int(time.time())
         windows = {window.name: window for window in project.windows}
         events: list[dict[str, Any]] = []
+        for observation in observations:
+            data = {"command_class": observation.command_class, "activity_timestamp": observation.activity_timestamp, "pane_dead": observation.pane_dead, "pane_dead_status": observation.pane_dead_status}
+            engine = windows[observation.window_name].engine
+            if engine is not None:
+                data["engine"] = engine
+            self._publish_integration(project, identity, "work.window.observed", {"window": observation.window_id, "window_name": observation.window_name, "pane": observation.pane_id}, data)
         for window_id, rows in grouped.items():
             first = rows[0]
             command_class, activity, dead, dead_status = self._aggregate_window(rows)
@@ -380,6 +416,10 @@ class Monitor:
             if previous is not None and previous.get("state") == event.get("state"):
                 continue
             latest[window_name] = event
+            data = {"state": event["state"], "confidence": "explicit"}
+            if windows[window_name].engine is not None:
+                data["engine"] = windows[window_name].engine
+            self._publish_integration(project, identity, "work.window.signal", {"window": window_id, "window_name": window_name, "pane": event["pane"]}, data)
             if event["state"] in project.monitor.states:
                 event["delivery"] = "append"
                 self._write_agentic_previous(project, identity, latest)
@@ -482,13 +522,18 @@ class Monitor:
                     raise WorkError("monitor já está ativo")
                 pid_path.unlink(missing_ok=True)
             write_bytes_atomic(pid_path, (json.dumps(marker, sort_keys=True) + "\n").encode("ascii"), exclusive=True)
+        normal = False
         try:
             while True:
                 self.inspect(project.slug)
                 if once:
+                    normal = True
                     return
                 time.sleep(interval)
         finally:
+            identity = self._integration_runs.get(project.slug)
+            if normal and project.monitor.agentic and identity is not None:
+                self._publish_integration(project, identity, "work.monitor.stopped", {}, {"reason": "normal"})
             with observability_lock(self.paths.runtime, project.slug):
                 try:
                     if json.loads(pid_path.read_text(encoding="ascii")) == marker:

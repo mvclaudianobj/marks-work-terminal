@@ -13,6 +13,7 @@ from work_orchestrator.gui import (
     _agent_executable_candidates,
     _agent_environment,
     _resolve_agent_executable,
+    agent_main,
     prepare_agent,
 )
 from work_orchestrator.runtime import Runtime
@@ -81,6 +82,43 @@ class GuiAgentTests(unittest.TestCase):
         self.assertTrue(handoff)
         self.assertTrue(claim)
         self.assertEqual(runtime.compile_context()["project_id"], runtime.project_id)
+
+    def test_agent_main_uses_visible_labels_and_passes_internal_values(self):
+        item = {"slug": "project", "root": str(self.project)}
+        answers = ["claude", "prepare", None]
+        with patch("work_orchestrator.gui.Paths.discover"), patch("work_orchestrator.gui.Service") as service, patch("work_orchestrator.gui.select_project", return_value="project"), patch("work_orchestrator.gui._run_zenity", side_effect=answers) as zenity, patch("work_orchestrator.gui._entry", return_value="src"), patch("work_orchestrator.gui.prepare_agent", return_value=None) as prepare:
+            service.return_value.projects.return_value = [item]
+            self.assertEqual(agent_main(), 0)
+
+        engine_arguments = zenity.call_args_list[0].args[0]
+        mode_arguments = zenity.call_args_list[1].args[0]
+        for arguments in (engine_arguments, mode_arguments):
+            self.assertIn("--hide-column=2", arguments)
+            self.assertIn("--print-column=2", arguments)
+            self.assertNotIn("--hide-column=3", arguments)
+            self.assertIn("--column=Usar", arguments)
+            self.assertIn("--column=Valor", arguments)
+            self.assertIn("--column=Descrição", arguments)
+            self.assertIn("--hide-header", arguments)
+            self.assertIn("--separator=--", arguments)
+        self.assertEqual(
+            engine_arguments[engine_arguments.index("TRUE"):engine_arguments.index("--hide-header")],
+            ("TRUE", "markscode", "MarksCode", "FALSE", "claude", "Claude", "FALSE", "opencode", "OpenCode", "FALSE", "codex", "Codex"),
+        )
+        self.assertEqual(
+            mode_arguments[mode_arguments.index("TRUE"):mode_arguments.index("--hide-header")],
+            ("TRUE", "prepare", "Preparar identidade/contexto (não inicia engine)", "FALSE", "start", "Iniciar engine após confirmação"),
+        )
+        prepare.assert_called_once_with(self.project, "claude", "prepare", "src", shared_readonly=False)
+
+    def test_agent_main_cancels_safely_before_prepare(self):
+        item = {"slug": "project", "root": str(self.project)}
+        for answers in ([None], ["codex", None]):
+            with self.subTest(answers=answers), patch("work_orchestrator.gui.Paths.discover"), patch("work_orchestrator.gui.Service") as service, patch("work_orchestrator.gui.select_project", return_value="project"), patch("work_orchestrator.gui._run_zenity", side_effect=answers), patch("work_orchestrator.gui._entry") as entry, patch("work_orchestrator.gui.prepare_agent") as prepare:
+                service.return_value.projects.return_value = [item]
+                self.assertEqual(agent_main(), 0)
+            entry.assert_not_called()
+            prepare.assert_not_called()
 
     def test_start_confirmation_cancel_does_not_spawn(self):
         with patch("work_orchestrator.gui._run_zenity", return_value=None), patch("work_orchestrator.gui.subprocess.Popen") as popen, patch.dict(os.environ, {"XDG_STATE_HOME": str(self.state)}):

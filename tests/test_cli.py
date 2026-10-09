@@ -24,6 +24,10 @@ class CliWorkspaceRestoreTests(unittest.TestCase):
         args = parser().parse_args(["signal", "utm7", "--window", "dev1-markscode", "--state", "waiting-user"])
         self.assertEqual((args.slug, args.window, args.state), ("utm7", "dev1-markscode", "waiting-user"))
 
+    def test_integration_events_arguments_are_bounded_identifiers_not_paths(self):
+        args = parser().parse_args(["integration", "events", "utm7", "--after", "9", "--limit", "25"])
+        self.assertEqual((args.slug, args.after, args.limit), ("utm7", 9, 25))
+
 
 if __name__ == "__main__":
     unittest.main()
