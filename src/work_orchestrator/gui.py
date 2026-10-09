@@ -171,7 +171,11 @@ def _terminal_environment(paths: Paths) -> dict[str, str]:
             "XDG_RUNTIME_DIR": str(runtime),
         })
     else:
-        environment["XDG_RUNTIME_DIR"] = str(paths.runtime.parent)
+        system_runtime = Path("/run/user") / str(os.geteuid())
+        if system_runtime.is_dir():
+            environment["XDG_RUNTIME_DIR"] = str(system_runtime)
+        else:
+            environment["XDG_RUNTIME_DIR"] = str(paths.runtime.parent)
     return environment
 
 
@@ -1074,10 +1078,10 @@ def agent_main() -> int:
         item = next((candidate for candidate in items if candidate.get("slug") == validate_slug(slug)), None)
         if not item or item.get("error"):
             raise WorkError("projeto selecionado inválido")
-        engine = _run_zenity(("--list", "--radiolist", "--title=Engine", "--text=Escolha a engine", "--hide-column=2", "--print-column=2", "--column=Usar", "--column=Engine", "TRUE", "markscode", "FALSE", "claude", "FALSE", "opencode", "FALSE", "codex"))
+        engine = _run_zenity(("--list", "--radiolist", "--title=Engine", "--text=Escolha a engine", "--hide-column=2", "--print-column=2", "--column=Usar", "--column=Valor", "--column=Descrição", "TRUE", "markscode", "MarksCode", "FALSE", "claude", "Claude", "FALSE", "opencode", "OpenCode", "FALSE", "codex", "Codex", "--hide-header", "--separator=--"))
         if engine is None:
             return 0
-        mode = _run_zenity(("--list", "--radiolist", "--title=Modo", "--text=Preparar ou iniciar", "--hide-column=2", "--print-column=2", "--column=Usar", "--column=Modo", "TRUE", "prepare", "FALSE", "start"))
+        mode = _run_zenity(("--list", "--radiolist", "--title=Modo", "--text=Preparar ou iniciar", "--hide-column=2", "--print-column=2", "--column=Usar", "--column=Valor", "--column=Descrição", "TRUE", "prepare", "Preparar identidade/contexto (não inicia engine)", "FALSE", "start", "Iniciar engine após confirmação", "--hide-header", "--separator=--"))
         if mode is None:
             return 0
         path = _entry("Escopo do agente", "Caminho relativo ao root", ".")

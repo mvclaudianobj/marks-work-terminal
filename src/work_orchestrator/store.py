@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .errors import WorkError
-from .paths import ensure_private_directory, ensure_regular_private_file
+from .paths import ensure_private_directory, ensure_regular_private_file, effective_uid
 
 
 SCHEMA = 2
@@ -64,7 +64,7 @@ def append_observation(path: Path, payload: bytes, max_bytes: int = 1024 * 1024,
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0))
         try:
             current_details = os.fstat(descriptor)
-            if not stat.S_ISREG(current_details.st_mode) or current_details.st_uid != os.geteuid() or stat.S_IMODE(current_details.st_mode) != 0o600 or current_details.st_nlink != 1:
+            if not stat.S_ISREG(current_details.st_mode) or current_details.st_uid != effective_uid() or stat.S_IMODE(current_details.st_mode) != 0o600 or current_details.st_nlink != 1:
                 raise WorkError(f"arquivo de observabilidade inseguro: {path}")
             current = path.lstat()
             if _identity(current) != _identity(current_details):
@@ -94,13 +94,13 @@ def append_observation(path: Path, payload: bytes, max_bytes: int = 1024 * 1024,
         details = os.fstat(descriptor)
         if current_details is not None and _identity(details) != _identity(current_details):
             raise WorkError(f"arquivo mudou antes da publicação: {path}")
-        if not stat.S_ISREG(details.st_mode) or details.st_uid != os.geteuid() or stat.S_IMODE(details.st_mode) != 0o600 or details.st_nlink != 1:
+        if not stat.S_ISREG(details.st_mode) or details.st_uid != effective_uid() or stat.S_IMODE(details.st_mode) != 0o600 or details.st_nlink != 1:
             raise WorkError(f"arquivo de observabilidade inseguro: {path}")
         os.write(descriptor, payload)
         os.fsync(descriptor)
         after = os.fstat(descriptor)
         current = path.lstat()
-        if not stat.S_ISREG(after.st_mode) or after.st_uid != os.geteuid() or stat.S_IMODE(after.st_mode) != 0o600 or after.st_nlink != 1 or _identity(current) != _identity(after) or after.st_size != details.st_size + len(payload):
+        if not stat.S_ISREG(after.st_mode) or after.st_uid != effective_uid() or stat.S_IMODE(after.st_mode) != 0o600 or after.st_nlink != 1 or _identity(current) != _identity(after) or after.st_size != details.st_size + len(payload):
             raise WorkError(f"arquivo mudou durante a publicação: {path}")
     finally:
         os.close(descriptor)
@@ -145,7 +145,7 @@ def _publication_lock(path: Path) -> Iterator[None]:
         raise WorkError(f"falha ao serializar publicação em {path}: {exc}") from exc
     try:
         details = os.fstat(descriptor)
-        if not stat.S_ISDIR(details.st_mode) or details.st_uid != os.geteuid() or stat.S_IMODE(details.st_mode) & 0o077:
+        if not stat.S_ISDIR(details.st_mode) or details.st_uid != effective_uid() or stat.S_IMODE(details.st_mode) & 0o077:
             raise WorkError(f"diretório privado inseguro: {path}")
         fcntl.flock(descriptor, fcntl.LOCK_EX)
     except WorkError:
@@ -191,7 +191,7 @@ def _read_private_bytes(path: Path, *, max_bytes: int | None = None) -> tuple[by
         raise WorkError(f"arquivo inseguro ou inacessível {path}: {exc}") from exc
     try:
         before = os.fstat(descriptor)
-        if not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid() or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1:
+        if not stat.S_ISREG(before.st_mode) or before.st_uid != effective_uid() or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1:
             raise WorkError(f"owner, tipo, permissões ou links inseguros: {path}")
         if max_bytes is not None and before.st_size > max_bytes:
             raise WorkError(f"arquivo excede o limite: {path}")
@@ -216,7 +216,7 @@ def _read_private_bytes(path: Path, *, max_bytes: int | None = None) -> tuple[by
         raise WorkError(f"arquivo mudou durante a leitura: {path}")
     if max_bytes is not None and len(payload) > max_bytes:
         raise WorkError(f"arquivo excede o limite: {path}")
-    if not stat.S_ISREG(current.st_mode) or current.st_uid != os.geteuid() or stat.S_IMODE(current.st_mode) != 0o600 or current.st_nlink != 1:
+    if not stat.S_ISREG(current.st_mode) or current.st_uid != effective_uid() or stat.S_IMODE(current.st_mode) != 0o600 or current.st_nlink != 1:
         raise WorkError(f"owner, tipo, permissões ou links inseguros: {path}")
     return payload, _fingerprint(after, payload), after
 

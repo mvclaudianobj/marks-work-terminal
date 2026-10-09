@@ -14,7 +14,7 @@ from typing import Any
 
 from .errors import WorkError
 from .model import Pane, PaneObservation, Project
-from .paths import Paths, validate_slug
+from .paths import Paths, validate_slug, effective_uid
 from .redaction import sanitize_pane_title
 from .store import SCHEMA, read_private_text, token_path, write_bytes_atomic
 
@@ -89,6 +89,19 @@ class Tmux:
         self.base = ["tmux", "-S", str(socket)]
         self.paths = paths
 
+    def _expected_socket_uid(self) -> int:
+        run_user = Path("/run/user")
+        try:
+            runtime = self.paths.runtime.resolve()
+            relative = runtime.relative_to(run_user)
+            uid_part = relative.parts[0]
+            uid = int(uid_part)
+            if uid >= 0:
+                return uid
+        except (ValueError, IndexError):
+            pass
+        return os.getuid()
+
     def _validate_socket(self) -> None:
         try:
             details = self.socket.lstat()
@@ -98,7 +111,7 @@ class Tmux:
             raise WorkError(f"socket tmux inacessível: {self.socket}: {exc}") from exc
         if stat.S_ISLNK(details.st_mode) or not stat.S_ISSOCK(details.st_mode):
             raise WorkError(f"socket tmux inseguro: {self.socket}")
-        if details.st_uid != os.getuid() or stat.S_IMODE(details.st_mode) & 0o077:
+        if details.st_uid != self._expected_socket_uid() or stat.S_IMODE(details.st_mode) & 0o077:
             raise WorkError(f"owner ou permissões inseguros no socket tmux: {self.socket}")
 
     def run(self, *args: str, check: bool = True, capture: bool = True) -> subprocess.CompletedProcess[str]:
@@ -148,7 +161,7 @@ class Tmux:
             details = socket.lstat()
         except OSError:
             return []
-        if not stat.S_ISSOCK(details.st_mode) or stat.S_ISLNK(details.st_mode) or details.st_uid != os.getuid() or stat.S_IMODE(details.st_mode) & 0o077:
+        if not stat.S_ISSOCK(details.st_mode) or stat.S_ISLNK(details.st_mode) or details.st_uid != effective_uid() or stat.S_IMODE(details.st_mode) & 0o077:
             return []
         try:
             result = subprocess.run(

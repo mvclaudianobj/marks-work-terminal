@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
+from .paths import effective_uid
 from .redaction import redact
 
 
@@ -14,7 +15,7 @@ def _validate_descriptor(descriptor: int, path: Path) -> None:
     details = os.fstat(descriptor)
     if (
         not stat.S_ISREG(details.st_mode)
-        or details.st_uid != os.geteuid()
+        or details.st_uid != effective_uid()
         or stat.S_IMODE(details.st_mode) != 0o600
         or details.st_nlink != 1
     ):
@@ -33,7 +34,7 @@ def _log_lock(path: Path) -> Iterator[None]:
         details = os.fstat(descriptor)
         if (
             not stat.S_ISREG(details.st_mode)
-            or details.st_uid != os.geteuid()
+            or details.st_uid != effective_uid()
             or stat.S_IMODE(details.st_mode) != 0o600
             or details.st_nlink != 1
         ):

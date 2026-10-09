@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .errors import WorkError
-from .paths import ensure_private_directory
+from .paths import ensure_private_directory, _root_launch_target_uid, effective_uid
 
 
 LOCK_ORDER = "workspace -> project -> session"
@@ -29,7 +29,8 @@ def _lock(path: Path) -> Iterator[None]:
     try:
         descriptor = os.open(path, flags, 0o600)
         details = os.fstat(descriptor)
-        if not stat.S_ISREG(details.st_mode) or details.st_uid != os.getuid() or stat.S_IMODE(details.st_mode) & 0o077:
+        expected_uid = effective_uid()
+        if not stat.S_ISREG(details.st_mode) or details.st_uid != expected_uid or stat.S_IMODE(details.st_mode) & 0o077:
             raise WorkError(f"lock inseguro: {path}")
         fcntl.flock(descriptor, fcntl.LOCK_EX)
     except WorkError:
@@ -53,15 +54,23 @@ def _lock(path: Path) -> Iterator[None]:
 @contextmanager
 def project_lock(runtime: Path, slug: str) -> Iterator[None]:
     directory = runtime / "locks"
-    ensure_private_directory(directory)
+    ensure_private_directory(directory, uid=_root_launch_target_uid())
     with _lock(_lock_path(runtime, f"project-{slug}.lock")):
+        yield
+
+
+@contextmanager
+def integration_lock(runtime: Path, slug: str) -> Iterator[None]:
+    directory = runtime / "locks"
+    ensure_private_directory(directory, uid=_root_launch_target_uid())
+    with _lock(_lock_path(runtime, f"integration-{slug}.lock")):
         yield
 
 
 @contextmanager
 def session_lock(runtime: Path, socket: Path, session: str) -> Iterator[None]:
     directory = runtime / "locks"
-    ensure_private_directory(directory)
+    ensure_private_directory(directory, uid=_root_launch_target_uid())
     identity = hashlib.sha256(f"{socket}\0{session}".encode("utf-8")).hexdigest()
     with _lock(_lock_path(runtime, f"session-{identity}.lock")):
         yield
@@ -83,6 +92,6 @@ def project_locks(runtime: Path, slug: str, socket: Path, session: str) -> Itera
 @contextmanager
 def observability_lock(runtime: Path, slug: str) -> Iterator[None]:
     directory = runtime / "locks"
-    ensure_private_directory(directory)
+    ensure_private_directory(directory, uid=_root_launch_target_uid())
     with _lock(_lock_path(runtime, f"observability-{slug}.lock")):
         yield

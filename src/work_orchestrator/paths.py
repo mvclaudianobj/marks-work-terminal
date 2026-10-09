@@ -1,4 +1,5 @@
 import os
+import pwd
 import re
 import stat
 from dataclasses import dataclass
@@ -17,15 +18,16 @@ def _absolute_xdg(value: str | os.PathLike[str], label: str) -> Path:
     return path
 
 
-def _runtime_is_safe(path: Path) -> bool:
+def _runtime_is_safe(path: Path, uid: int | None = None) -> bool:
     try:
         details = path.lstat()
     except OSError:
         return False
+    expected_uid = uid if uid is not None else os.geteuid()
     return (
         not stat.S_ISLNK(details.st_mode)
         and stat.S_ISDIR(details.st_mode)
-        and details.st_uid == os.geteuid()
+        and details.st_uid == expected_uid
         and stat.S_IMODE(details.st_mode) & 0o022 == 0
     )
 
@@ -34,7 +36,29 @@ def _system_runtime() -> Path:
     return Path("/run/user") / str(os.geteuid())
 
 
-def ensure_private_directory(path: Path) -> None:
+def _root_launch_target_uid() -> int | None:
+    if os.geteuid() != 0:
+        return None
+    allow = os.environ.get("WORK_ALLOW_ROOT_LAUNCH")
+    target_uid_str = os.environ.get("WORK_TARGET_UID")
+    if not allow or not target_uid_str:
+        return None
+    try:
+        target_uid = int(target_uid_str)
+        pw = pwd.getpwnam(allow)
+        if pw.pw_uid == target_uid and target_uid > 0:
+            return target_uid
+    except (ValueError, KeyError):
+        pass
+    return None
+
+
+def effective_uid() -> int:
+    uid = _root_launch_target_uid()
+    return uid if uid is not None else os.geteuid()
+
+
+def ensure_private_directory(path: Path, uid: int | None = None) -> None:
     try:
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
         details = path.lstat()
@@ -42,7 +66,8 @@ def ensure_private_directory(path: Path) -> None:
         raise WorkError(f"não foi possível preparar diretório privado {path}: {exc}") from exc
     if stat.S_ISLNK(details.st_mode) or not stat.S_ISDIR(details.st_mode):
         raise WorkError(f"diretório privado inseguro: {path}")
-    if details.st_uid != os.geteuid():
+    expected_uid = uid if uid is not None else os.geteuid()
+    if details.st_uid != expected_uid:
         raise WorkError(f"diretório privado pertence a outro usuário: {path}")
     try:
         path.chmod(0o700)
@@ -57,7 +82,7 @@ def ensure_regular_private_file(path: Path) -> os.stat_result:
         raise WorkError(f"arquivo inseguro ou inacessível {path}: {exc}") from exc
     if stat.S_ISLNK(details.st_mode) or not stat.S_ISREG(details.st_mode):
         raise WorkError(f"arquivo inseguro: {path}")
-    if details.st_uid != os.getuid() or stat.S_IMODE(details.st_mode) & 0o077 or details.st_nlink != 1:
+    if details.st_uid != effective_uid() or stat.S_IMODE(details.st_mode) & 0o077 or details.st_nlink != 1:
         raise WorkError(f"owner, permissões ou links inseguros: {path}")
     return details
 
@@ -117,16 +142,28 @@ class Paths:
     @classmethod
     def discover(cls) -> "Paths":
         home = Path.home()
-        config_home = _absolute_xdg(os.environ.get("XDG_CONFIG_HOME", home / ".config"), "XDG_CONFIG_HOME")
-        state_home = _absolute_xdg(os.environ.get("XDG_STATE_HOME", home / ".local/state"), "XDG_STATE_HOME")
-        runtime_value = os.environ.get("XDG_RUNTIME_DIR")
-        if runtime_value:
-            runtime_home = _absolute_xdg(runtime_value, "XDG_RUNTIME_DIR")
-            if not _runtime_is_safe(runtime_home):
-                raise WorkError(f"XDG_RUNTIME_DIR inseguro: {runtime_home}")
+        target_uid = _root_launch_target_uid()
+        if target_uid is not None:
+            try:
+                pw = pwd.getpwuid(target_uid)
+            except KeyError as exc:
+                raise WorkError(f"usuário target uid={target_uid} não encontrado") from exc
+            config_home = _absolute_xdg(pw.pw_dir + "/.config", "XDG_CONFIG_HOME")
+            state_home = _absolute_xdg(pw.pw_dir + "/.local/state", "XDG_STATE_HOME")
+            runtime_home = Path("/run/user") / str(target_uid)
+            if not _runtime_is_safe(runtime_home, uid=target_uid):
+                raise WorkError(f"runtime root-launch inseguro: {runtime_home}")
         else:
-            system_runtime = _system_runtime()
-            runtime_home = system_runtime if _runtime_is_safe(system_runtime) else state_home / "runtime"
+            config_home = _absolute_xdg(os.environ.get("XDG_CONFIG_HOME", home / ".config"), "XDG_CONFIG_HOME")
+            state_home = _absolute_xdg(os.environ.get("XDG_STATE_HOME", home / ".local/state"), "XDG_STATE_HOME")
+            runtime_value = os.environ.get("XDG_RUNTIME_DIR")
+            if runtime_value:
+                runtime_home = _absolute_xdg(runtime_value, "XDG_RUNTIME_DIR")
+                if not _runtime_is_safe(runtime_home):
+                    raise WorkError(f"XDG_RUNTIME_DIR inseguro: {runtime_home}")
+            else:
+                system_runtime = _system_runtime()
+                runtime_home = system_runtime if _runtime_is_safe(system_runtime) else state_home / "runtime"
         return cls(
             config_home / "work-orchestrator" / "projects",
             state_home / "work-orchestrator",
@@ -153,7 +190,7 @@ class Paths:
             details
             and stat.S_ISSOCK(details.st_mode)
             and not stat.S_ISLNK(details.st_mode)
-            and details.st_uid == os.geteuid()
+            and details.st_uid == effective_uid()
             and stat.S_IMODE(details.st_mode) & 0o077 == 0
         )
         return {
@@ -167,10 +204,11 @@ class Paths:
         }
 
     def ensure(self) -> None:
-        ensure_private_directory(self.config)
-        ensure_private_directory(self.state)
-        ensure_private_directory(self.runtime)
-        ensure_private_directory(self.state / "workspaces")
+        uid = _root_launch_target_uid()
+        ensure_private_directory(self.config, uid=uid)
+        ensure_private_directory(self.state, uid=uid)
+        ensure_private_directory(self.runtime, uid=uid)
+        ensure_private_directory(self.state / "workspaces", uid=uid)
 
 
 def validate_slug(value: str) -> str:
